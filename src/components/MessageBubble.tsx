@@ -1,5 +1,5 @@
-import React from 'react'
-import { User, Sparkles } from 'lucide-react'
+import React, { useState } from 'react'
+import { User, Sparkles, Copy, Check } from 'lucide-react'
 import MarkdownRenderer from './MarkdownRenderer'
 
 interface Props {
@@ -8,9 +8,18 @@ interface Props {
 
 export default function MessageBubble({ message }: Props) {
   const isUser = message.role === 'user'
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(message.content)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  const showCopy = message.content && !message.isStreaming
 
   return (
-    <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'} mb-5`}>
+    <div className={`group flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'} mb-5`}>
       {/* Avatar */}
       <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
         isUser
@@ -25,7 +34,7 @@ export default function MessageBubble({ message }: Props) {
         <span className="text-[11px] text-gray-600 mb-1 block">
           {isUser ? 'You' : 'Claude'}
         </span>
-        <div className={`rounded-2xl px-4 py-3 ${
+        <div className={`relative rounded-2xl px-4 py-3 ${
           isUser
             ? 'bg-chat-user text-white rounded-tr-sm'
             : 'bg-chat-surface text-gray-200 rounded-tl-sm border border-chat-border'
@@ -50,6 +59,21 @@ export default function MessageBubble({ message }: Props) {
                 <span className="typing-cursor"></span>
               )}
             </div>
+          )}
+
+          {/* Copy button */}
+          {showCopy && (
+            <button
+              onClick={handleCopy}
+              className={`absolute -bottom-3 ${isUser ? 'left-2' : 'right-2'} opacity-0 group-hover:opacity-100 p-1 rounded-md bg-chat-surface border border-chat-border hover:border-gray-600 transition-all`}
+              title="Copy"
+            >
+              {copied ? (
+                <Check size={12} className="text-green-400" />
+              ) : (
+                <Copy size={12} className="text-gray-500" />
+              )}
+            </button>
           )}
         </div>
       </div>

@@ -1,13 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { Send, Square } from 'lucide-react'
+import { Send, Square, FlaskConical } from 'lucide-react'
 
 interface Props {
   onSend: (content: string) => void
   onStop: () => void
+  onDistill: () => void
   isLoading: boolean
+  hasMessages: boolean
 }
 
-export default function InputBar({ onSend, onStop, isLoading }: Props) {
+export default function InputBar({ onSend, onStop, onDistill, isLoading, hasMessages }: Props) {
   const [input, setInput] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -41,6 +43,15 @@ export default function InputBar({ onSend, onStop, isLoading }: Props) {
     <div className="p-4 border-t border-chat-border bg-chat-bg">
       <div className="max-w-3xl mx-auto">
         <div className="flex items-end gap-3 bg-chat-surface border border-chat-border rounded-2xl px-4 py-3 focus-within:border-violet-600/50 transition-colors">
+          {hasMessages && !isLoading && (
+            <button
+              onClick={onDistill}
+              className="titlebar-no-drag flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-lg hover:bg-amber-600/20 text-amber-500/60 hover:text-amber-400 transition-colors"
+              title="蒸馏 · 提取本次对话关键信息"
+            >
+              <FlaskConical size={15} />
+            </button>
+          )}
           <textarea
             ref={textareaRef}
             value={input}

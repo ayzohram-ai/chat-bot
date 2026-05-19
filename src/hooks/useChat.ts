@@ -1,9 +1,46 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 
-export function useChat() {
-  const [messages, setMessages] = useState<Message[]>([])
+function buildPromptWithContext(messages: Message[], newMessage: string): string {
+  const history = messages.filter(m => !m.isStreaming && m.content)
+  if (history.length === 0) return newMessage
+
+  const recent = history.slice(-20)
+  let transcript = 'Previous conversation:\n'
+  for (const msg of recent) {
+    transcript += `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}\n`
+  }
+  transcript += `\nCurrent message from user: ${newMessage}`
+  return transcript
+}
+
+export function useChat(
+  initialMessages: Message[] = [],
+  onMessagesChange?: (messages: Message[]) => void,
+) {
+  const [messages, setMessages] = useState<Message[]>(initialMessages)
   const [isLoading, setIsLoading] = useState(false)
   const streamTextRef = useRef('')
+  const onMessagesChangeRef = useRef(onMessagesChange)
+  onMessagesChangeRef.current = onMessagesChange
+
+  // Sync when switching conversations
+  const initialRef = useRef(initialMessages)
+  useEffect(() => {
+    if (initialMessages !== initialRef.current) {
+      initialRef.current = initialMessages
+      setMessages(initialMessages)
+      setIsLoading(false)
+      streamTextRef.current = ''
+      window.claude.stop()
+    }
+  }, [initialMessages])
+
+  // Persist messages on change
+  useEffect(() => {
+    if (!messages.some(m => m.isStreaming)) {
+      onMessagesChangeRef.current?.(messages)
+    }
+  }, [messages])
 
   useEffect(() => {
     const unsubStream = window.claude.onStream((text: string) => {
@@ -62,14 +99,14 @@ export function useChat() {
       id: crypto.randomUUID(),
       role: 'user',
       content: content.trim(),
-      timestamp: new Date(),
+      timestamp: new Date().toISOString(),
     }
 
     const assistantMsg: Message = {
       id: crypto.randomUUID(),
       role: 'assistant',
       content: '',
-      timestamp: new Date(),
+      timestamp: new Date().toISOString(),
       isStreaming: true,
     }
 
@@ -78,12 +115,13 @@ export function useChat() {
     setIsLoading(true)
 
     try {
-      await window.claude.send(content.trim())
+      const prompt = buildPromptWithContext(messages, content.trim())
+      await window.claude.send(prompt)
     } catch (err) {
       console.error('Failed to send:', err)
       setIsLoading(false)
     }
-  }, [isLoading])
+  }, [isLoading, messages])
 
   const stopGeneration = useCallback(() => {
     window.claude.stop()

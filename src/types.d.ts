@@ -14,6 +14,14 @@ interface Message {
   id: string
   role: 'user' | 'assistant'
   content: string
-  timestamp: Date
+  timestamp: string
   isStreaming?: boolean
+}
+
+interface Conversation {
+  id: string
+  title: string
+  messages: Message[]
+  createdAt: string
+  updatedAt: string
 }

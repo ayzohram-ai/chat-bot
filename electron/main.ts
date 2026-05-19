@@ -48,7 +48,7 @@ ipcMain.handle('chat:send', async (event, prompt: string) => {
   }
 
   return new Promise<void>((resolve, reject) => {
-    const claude = spawn('claude', ['-p', prompt], {
+    const claude = spawn('claude', ['-p', '--dangerously-skip-permissions', prompt], {
       env: { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}` },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
