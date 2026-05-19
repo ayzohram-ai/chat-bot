@@ -6,50 +6,16 @@ export function useChat() {
   const streamTextRef = useRef('')
 
   useEffect(() => {
-    const unsubStream = window.claude.onStream((data: any) => {
-      // Handle stream-json format from Claude CLI
-      if (data.type === 'assistant' && data.message?.content) {
-        for (const block of data.message.content) {
-          if (block.type === 'text') {
-            streamTextRef.current = block.text
-            setMessages((prev) => {
-              const updated = [...prev]
-              const last = updated[updated.length - 1]
-              if (last && last.role === 'assistant' && last.isStreaming) {
-                updated[updated.length - 1] = { ...last, content: streamTextRef.current }
-              }
-              return updated
-            })
-          }
+    const unsubStream = window.claude.onStream((text: string) => {
+      streamTextRef.current += text
+      setMessages((prev) => {
+        const updated = [...prev]
+        const last = updated[updated.length - 1]
+        if (last && last.role === 'assistant' && last.isStreaming) {
+          updated[updated.length - 1] = { ...last, content: streamTextRef.current }
         }
-      }
-      // Handle content_block_delta for streaming
-      if (data.type === 'content_block_delta' && data.delta?.text) {
-        streamTextRef.current += data.delta.text
-        setMessages((prev) => {
-          const updated = [...prev]
-          const last = updated[updated.length - 1]
-          if (last && last.role === 'assistant' && last.isStreaming) {
-            updated[updated.length - 1] = { ...last, content: streamTextRef.current }
-          }
-          return updated
-        })
-      }
-      // Handle result message (final)
-      if (data.type === 'result' && data.result) {
-        const text = typeof data.result === 'string' ? data.result : data.result
-        if (text) {
-          streamTextRef.current = text
-          setMessages((prev) => {
-            const updated = [...prev]
-            const last = updated[updated.length - 1]
-            if (last && last.role === 'assistant' && last.isStreaming) {
-              updated[updated.length - 1] = { ...last, content: text, isStreaming: false }
-            }
-            return updated
-          })
-        }
-      }
+        return updated
+      })
     })
 
     const unsubDone = window.claude.onDone(() => {
@@ -67,6 +33,19 @@ export function useChat() {
 
     const unsubError = window.claude.onError((error: string) => {
       console.error('Claude error:', error)
+      setMessages((prev) => {
+        const updated = [...prev]
+        const last = updated[updated.length - 1]
+        if (last && last.role === 'assistant' && last.isStreaming) {
+          updated[updated.length - 1] = {
+            ...last,
+            content: `Error: ${error}`,
+            isStreaming: false,
+          }
+        }
+        return updated
+      })
+      setIsLoading(false)
     })
 
     return () => {

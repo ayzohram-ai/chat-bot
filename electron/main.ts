@@ -48,28 +48,15 @@ ipcMain.handle('chat:send', async (event, prompt: string) => {
   }
 
   return new Promise<void>((resolve, reject) => {
-    const claude = spawn('claude', ['-p', '--output-format', 'stream-json', prompt], {
+    const claude = spawn('claude', ['-p', prompt], {
       env: { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}` },
-      shell: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
     })
 
     activeProcess = claude
-    let buffer = ''
 
     claude.stdout.on('data', (data: Buffer) => {
-      buffer += data.toString()
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
-
-      for (const line of lines) {
-        if (!line.trim()) continue
-        try {
-          const parsed = JSON.parse(line)
-          mainWindow?.webContents.send('chat:stream', parsed)
-        } catch {
-          // skip non-JSON lines
-        }
-      }
+      mainWindow?.webContents.send('chat:stream', data.toString())
     })
 
     claude.stderr.on('data', (data: Buffer) => {
