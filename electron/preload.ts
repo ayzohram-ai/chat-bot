@@ -1,8 +1,9 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 contextBridge.exposeInMainWorld('claude', {
   send: (prompt: string) => ipcRenderer.invoke('chat:send', prompt),
   stop: () => ipcRenderer.invoke('chat:stop'),
+  getFilePath: (file: File) => webUtils.getPathForFile(file),
   onStream: (callback: (data: any) => void) => {
     const listener = (_event: any, data: any) => callback(data)
     ipcRenderer.on('chat:stream', listener)

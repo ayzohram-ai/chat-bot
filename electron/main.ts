@@ -30,7 +30,18 @@ function createWindow() {
 app.whenReady().then(createWindow)
 
 app.on('window-all-closed', () => {
+  if (activeProcess) {
+    activeProcess.kill()
+    activeProcess = null
+  }
   if (process.platform !== 'darwin') app.quit()
+})
+
+app.on('before-quit', () => {
+  if (activeProcess) {
+    activeProcess.kill()
+    activeProcess = null
+  }
 })
 
 app.on('activate', () => {

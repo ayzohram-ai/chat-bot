@@ -14,6 +14,7 @@ export default function App() {
   } = useConversations()
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([])
 
   const handleMessagesChange = useCallback((msgs: Message[]) => {
     if (activeId && msgs.length > 0) {
@@ -22,16 +23,34 @@ export default function App() {
   }, [activeId, updateMessages])
 
   const { messages, isLoading, sendMessage, stopGeneration, clearMessages } = useChat(
+    activeId,
     activeConversation?.messages || [],
     handleMessagesChange,
   )
 
   const handleSend = useCallback((content: string) => {
-    if (!activeId) {
-      createConversation(content)
+    const hasFiles = attachedFiles.length > 0
+    const fileNames = attachedFiles.map(f => f.name)
+
+    // What the user sees in the chat bubble
+    const displayText = hasFiles
+      ? (content.trim() || `分析文件: ${fileNames.join(', ')}`)
+      : content.trim()
+
+    // What gets sent to Claude (includes full file paths)
+    let promptForClaude: string | undefined
+    if (hasFiles) {
+      const filePaths = attachedFiles.map(f => `请读取这个本地文件: ${f.path}`).join('\n')
+      const userText = content.trim() || '请读取并分析以上文件。'
+      promptForClaude = `${filePaths}\n\n${userText}`
+      setAttachedFiles([])
     }
-    sendMessage(content)
-  }, [activeId, createConversation, sendMessage])
+
+    if (!activeId) {
+      createConversation(displayText)
+    }
+    sendMessage(displayText, promptForClaude)
+  }, [activeId, createConversation, sendMessage, attachedFiles])
 
   const handleDistill = useCallback(() => {
     if (messages.length === 0 || isLoading) return
@@ -65,6 +84,7 @@ export default function App() {
   const handleNewChat = useCallback(() => {
     newChat()
     clearMessages()
+    setAttachedFiles([])
     setSidebarOpen(false)
   }, [newChat, clearMessages])
 
@@ -73,8 +93,17 @@ export default function App() {
       stopGeneration()
     }
     switchConversation(id)
+    setAttachedFiles([])
     setSidebarOpen(false)
   }, [isLoading, stopGeneration, switchConversation])
+
+  const handleFilesAttach = useCallback((files: AttachedFile[]) => {
+    setAttachedFiles(prev => [...prev, ...files])
+  }, [])
+
+  const handleFileRemove = useCallback((index: number) => {
+    setAttachedFiles(prev => prev.filter((_, i) => i !== index))
+  }, [])
 
   return (
     <div className="h-screen flex flex-col bg-chat-bg text-white">
@@ -121,6 +150,9 @@ export default function App() {
         onDistill={handleDistill}
         isLoading={isLoading}
         hasMessages={messages.length > 0}
+        attachedFiles={attachedFiles}
+        onFilesAttach={handleFilesAttach}
+        onFileRemove={handleFileRemove}
       />
     </div>
   )

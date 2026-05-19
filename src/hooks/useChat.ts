@@ -14,6 +14,7 @@ function buildPromptWithContext(messages: Message[], newMessage: string): string
 }
 
 export function useChat(
+  conversationId: string | null,
   initialMessages: Message[] = [],
   onMessagesChange?: (messages: Message[]) => void,
 ) {
@@ -21,19 +22,26 @@ export function useChat(
   const [isLoading, setIsLoading] = useState(false)
   const streamTextRef = useRef('')
   const onMessagesChangeRef = useRef(onMessagesChange)
+  const prevConvIdRef = useRef(conversationId)
   onMessagesChangeRef.current = onMessagesChange
 
-  // Sync when switching conversations
-  const initialRef = useRef(initialMessages)
+  // Only reset when conversation ID actually changes (not on first create)
   useEffect(() => {
-    if (initialMessages !== initialRef.current) {
-      initialRef.current = initialMessages
+    if (conversationId !== prevConvIdRef.current) {
+      const wasNull = prevConvIdRef.current === null
+      prevConvIdRef.current = conversationId
+
+      // If switching from null to a new ID, it's a new conversation being created
+      // Don't reset if we're currently loading (means we just sent the first message)
+      if (wasNull && isLoading) return
+
+      // Switching between existing conversations
       setMessages(initialMessages)
       setIsLoading(false)
       streamTextRef.current = ''
       window.claude.stop()
     }
-  }, [initialMessages])
+  }, [conversationId, initialMessages, isLoading])
 
   // Persist messages on change
   useEffect(() => {
@@ -83,6 +91,7 @@ export function useChat(
         return updated
       })
       setIsLoading(false)
+      streamTextRef.current = ''
     })
 
     return () => {
@@ -92,8 +101,8 @@ export function useChat(
     }
   }, [])
 
-  const sendMessage = useCallback(async (content: string) => {
-    if (!content.trim() || isLoading) return
+  const sendMessage = useCallback(async (content: string, promptOverride?: string) => {
+    if ((!content.trim() && !promptOverride) || isLoading) return
 
     const userMsg: Message = {
       id: crypto.randomUUID(),
@@ -115,7 +124,8 @@ export function useChat(
     setIsLoading(true)
 
     try {
-      const prompt = buildPromptWithContext(messages, content.trim())
+      const textForClaude = promptOverride || content.trim()
+      const prompt = buildPromptWithContext(messages, textForClaude)
       await window.claude.send(prompt)
     } catch (err) {
       console.error('Failed to send:', err)
