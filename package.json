@@ -18,14 +18,13 @@
     "directories": {
       "output": "release"
     },
+    "electronDist": "node_modules/electron/dist",
     "mac": {
       "target": ["dmg"],
-      "icon": "public/icon.png",
       "category": "public.app-category.developer-tools"
     },
     "win": {
-      "target": ["nsis"],
-      "icon": "public/icon.png"
+      "target": ["nsis"]
     },
     "nsis": {
       "oneClick": true,
