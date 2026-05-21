@@ -67,7 +67,7 @@ function getShellEnv(): Record<string, string> {
 //    On Windows npm installs `claude.cmd`; spawn without shell won't find it.
 // ---------------------------------------------------------------------------
 function findClaudeBinary(env: Record<string, string>): string {
-  // Try `which` / `where` first
+  // 1. Try `which` / `where` with our resolved env
   try {
     const cmd = isWin ? 'where claude' : 'which claude'
     const result = execSync(cmd, { encoding: 'utf-8', env, timeout: 5000 }).trim()
@@ -75,11 +75,24 @@ function findClaudeBinary(env: Record<string, string>): string {
     if (first && fs.existsSync(first)) return first
   } catch {}
 
-  // Brute-force common install locations
+  // 2. On Windows, also try via cmd.exe explicitly (different PATH than powershell)
+  if (isWin) {
+    try {
+      const result = execSync('cmd.exe /c where claude', {
+        encoding: 'utf-8',
+        timeout: 5000,
+      }).trim()
+      const first = result.split('\r\n')[0].trim()
+      if (first && fs.existsSync(first)) return first
+    } catch {}
+  }
+
+  // 3. Brute-force common install locations
   const home = os.homedir()
   const candidates = isWin
     ? [
         path.join(home, 'AppData', 'Roaming', 'npm', 'claude.cmd'),
+        path.join(home, 'AppData', 'Roaming', 'npm', 'claude'),
         path.join(home, '.volta', 'bin', 'claude.cmd'),
         'C:\\Program Files\\nodejs\\claude.cmd',
       ]
@@ -95,7 +108,7 @@ function findClaudeBinary(env: Record<string, string>): string {
     if (fs.existsSync(p)) return p
   }
 
-  // Last resort — will use shell to resolve
+  // 4. Last resort — just 'claude', let the shell figure it out
   return 'claude'
 }
 
@@ -167,12 +180,12 @@ ipcMain.handle('chat:send', async (_event, prompt: string) => {
   killActive()
 
   return new Promise<void>((resolve) => {
-    // Always use shell: true — this lets the OS handle PATH lookup,
-    // .cmd suffix resolution (Windows), and symlink traversal.
-    // claudeBin is either an absolute path or just 'claude'.
+    // Always spawn through a shell so it can resolve PATH, .cmd, etc.
+    // On Windows: explicitly use cmd.exe (not powershell) since claude
+    // may only be on cmd's PATH.
     const claude = spawn(claudeBin, ['-p', '--dangerously-skip-permissions', prompt], {
       env: shellEnv,
-      shell: true,
+      shell: isWin ? process.env.ComSpec || 'cmd.exe' : true,
     })
 
     activeProcess = claude
