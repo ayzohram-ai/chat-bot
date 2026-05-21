@@ -10,112 +10,148 @@ const pathSep = isWin ? ';' : ':'
 let mainWindow: BrowserWindow | null = null
 
 // ---------------------------------------------------------------------------
-// 1. Resolve the user's full login-shell environment
-//    Electron (especially packaged .app / .exe) does NOT inherit the user's
-//    shell PATH, nvm, volta, etc.
+// 1. Build a merged PATH that covers ALL shells the user might have.
+//    We don't pick cmd vs powershell — we merge both, plus common locations.
 // ---------------------------------------------------------------------------
-function getShellEnv(): Record<string, string> {
+function buildMergedEnv(): Record<string, string> {
   const env = { ...process.env } as Record<string, string>
+  const home = os.homedir()
+  const extraPaths: string[] = []
 
   if (isWin) {
-    // Windows: `cmd /c set` dumps all env vars
+    // Collect PATH from cmd
     try {
-      const raw = execSync('cmd /c set', { encoding: 'utf-8', timeout: 8000 })
-      for (const line of raw.split('\r\n')) {
-        const idx = line.indexOf('=')
-        if (idx > 0) env[line.slice(0, idx)] = line.slice(idx + 1)
-      }
-    } catch {
-      const home = os.homedir()
-      const extra = [
-        path.join(home, 'AppData', 'Roaming', 'npm'),
-        path.join(home, '.volta', 'bin'),
-        'C:\\Program Files\\nodejs',
-      ]
-      env.PATH = [...extra, env.PATH || ''].join(pathSep)
-    }
+      const raw = execSync('cmd.exe /c "echo %PATH%"', { encoding: 'utf-8', timeout: 5000 }).trim()
+      if (raw && !raw.includes('%PATH%')) extraPaths.push(...raw.split(';'))
+    } catch {}
+
+    // Collect PATH from powershell
+    try {
+      const raw = execSync('powershell.exe -NoProfile -Command "$env:PATH"', {
+        encoding: 'utf-8',
+        timeout: 5000,
+      }).trim()
+      if (raw) extraPaths.push(...raw.split(';'))
+    } catch {}
+
+    // Common install locations
+    extraPaths.push(
+      path.join(home, 'AppData', 'Roaming', 'npm'),
+      path.join(home, '.volta', 'bin'),
+      'C:\\Program Files\\nodejs',
+    )
   } else {
-    // macOS / Linux: ask the user's default shell for its env
+    // macOS / Linux: read from user's login shell
     try {
       const shell = process.env.SHELL || '/bin/zsh'
-      const raw = execSync(`${shell} -ilc 'env'`, { encoding: 'utf-8', timeout: 8000 })
-      for (const line of raw.split('\n')) {
-        const idx = line.indexOf('=')
-        if (idx > 0) env[line.slice(0, idx)] = line.slice(idx + 1)
-      }
-    } catch {
-      const home = os.homedir()
-      const extra = [
-        `${home}/.nvm/versions/node/current/bin`,
-        `${home}/.npm-global/bin`,
-        `${home}/.volta/bin`,
-        `${home}/.local/bin`,
-        '/opt/homebrew/bin',
-        '/usr/local/bin',
-        '/usr/bin',
-        '/bin',
-      ]
-      env.PATH = [...extra, env.PATH || ''].join(pathSep)
+      const raw = execSync(`${shell} -ilc 'echo $PATH'`, {
+        encoding: 'utf-8',
+        timeout: 8000,
+      }).trim()
+      if (raw) extraPaths.push(...raw.split(':'))
+    } catch {}
+
+    // Common install locations
+    extraPaths.push(
+      `${home}/.nvm/versions/node/current/bin`,
+      `${home}/.npm-global/bin`,
+      `${home}/.volta/bin`,
+      `${home}/.local/bin`,
+      '/opt/homebrew/bin',
+      '/usr/local/bin',
+      '/usr/bin',
+      '/bin',
+    )
+  }
+
+  // Merge: current PATH + all discovered paths, deduplicated
+  const currentPaths = (env.PATH || '').split(pathSep)
+  const allPaths = [...currentPaths, ...extraPaths]
+  const seen = new Set<string>()
+  const deduped: string[] = []
+  for (const p of allPaths) {
+    const normalized = p.trim()
+    if (normalized && !seen.has(normalized.toLowerCase())) {
+      seen.add(normalized.toLowerCase())
+      deduped.push(normalized)
     }
   }
+  env.PATH = deduped.join(pathSep)
 
   return env
 }
 
 // ---------------------------------------------------------------------------
-// 2. Find the absolute path to the `claude` binary
-//    On Windows npm installs `claude.cmd`; spawn without shell won't find it.
+// 2. Find claude — try every method, return absolute path or bare name
 // ---------------------------------------------------------------------------
-function findClaudeBinary(env: Record<string, string>): string {
-  // 1. Try `which` / `where` with our resolved env
-  try {
-    const cmd = isWin ? 'where claude' : 'which claude'
-    const result = execSync(cmd, { encoding: 'utf-8', env, timeout: 5000 }).trim()
-    const first = result.split('\n')[0].trim()
-    if (first && fs.existsSync(first)) return first
-  } catch {}
-
-  // 2. On Windows, also try via cmd.exe explicitly (different PATH than powershell)
-  if (isWin) {
-    try {
-      const result = execSync('cmd.exe /c where claude', {
-        encoding: 'utf-8',
-        timeout: 5000,
-      }).trim()
-      const first = result.split('\r\n')[0].trim()
-      if (first && fs.existsSync(first)) return first
-    } catch {}
-  }
-
-  // 3. Brute-force common install locations
+function findClaudeBinary(env: Record<string, string>): { bin: string; shell: string | true } {
   const home = os.homedir()
-  const candidates = isWin
-    ? [
-        path.join(home, 'AppData', 'Roaming', 'npm', 'claude.cmd'),
-        path.join(home, 'AppData', 'Roaming', 'npm', 'claude'),
-        path.join(home, '.volta', 'bin', 'claude.cmd'),
-        'C:\\Program Files\\nodejs\\claude.cmd',
-      ]
-    : [
-        `${home}/.npm-global/bin/claude`,
-        `${home}/.nvm/versions/node/current/bin/claude`,
-        `${home}/.volta/bin/claude`,
-        '/opt/homebrew/bin/claude',
-        '/usr/local/bin/claude',
-      ]
 
-  for (const p of candidates) {
-    if (fs.existsSync(p)) return p
+  if (isWin) {
+    // Try `where` via cmd
+    try {
+      const result = execSync('cmd.exe /c where claude', { encoding: 'utf-8', env, timeout: 5000 }).trim()
+      const first = result.split(/\r?\n/)[0].trim()
+      if (first && fs.existsSync(first)) {
+        return { bin: first, shell: first.endsWith('.cmd') ? 'cmd.exe' : true }
+      }
+    } catch {}
+
+    // Try `where` via powershell
+    try {
+      const result = execSync(
+        'powershell.exe -NoProfile -Command "(Get-Command claude -ErrorAction SilentlyContinue).Source"',
+        { encoding: 'utf-8', env, timeout: 5000 },
+      ).trim()
+      if (result && fs.existsSync(result)) {
+        return { bin: result, shell: result.endsWith('.cmd') ? 'cmd.exe' : 'powershell.exe' }
+      }
+    } catch {}
+
+    // Brute-force common locations
+    const candidates = [
+      path.join(home, 'AppData', 'Roaming', 'npm', 'claude.cmd'),
+      path.join(home, 'AppData', 'Roaming', 'npm', 'claude.ps1'),
+      path.join(home, 'AppData', 'Roaming', 'npm', 'claude'),
+      path.join(home, '.volta', 'bin', 'claude.cmd'),
+      path.join(home, '.volta', 'bin', 'claude.exe'),
+      'C:\\Program Files\\nodejs\\claude.cmd',
+    ]
+    for (const p of candidates) {
+      if (fs.existsSync(p)) {
+        return { bin: p, shell: p.endsWith('.cmd') ? 'cmd.exe' : true }
+      }
+    }
+  } else {
+    // macOS / Linux: `which`
+    try {
+      const result = execSync('which claude', { encoding: 'utf-8', env, timeout: 5000 }).trim()
+      if (result && fs.existsSync(result)) return { bin: result, shell: true }
+    } catch {}
+
+    // Brute-force
+    const candidates = [
+      `${home}/.npm-global/bin/claude`,
+      `${home}/.nvm/versions/node/current/bin/claude`,
+      `${home}/.volta/bin/claude`,
+      '/opt/homebrew/bin/claude',
+      '/usr/local/bin/claude',
+    ]
+    for (const p of candidates) {
+      if (fs.existsSync(p)) return { bin: p, shell: true }
+    }
   }
 
-  // 4. Last resort — just 'claude', let the shell figure it out
-  return 'claude'
+  // Last resort — bare name, let shell resolve at runtime
+  return { bin: 'claude', shell: true }
 }
 
-const shellEnv = getShellEnv()
-const claudeBin = findClaudeBinary(shellEnv)
+const mergedEnv = buildMergedEnv()
+const { bin: claudeBin, shell: claudeShell } = findClaudeBinary(mergedEnv)
 console.log('[claude-chat] platform:', process.platform)
+console.log('[claude-chat] PATH:', mergedEnv.PATH)
 console.log('[claude-chat] resolved claude binary:', claudeBin)
+console.log('[claude-chat] shell:', claudeShell)
 
 // ---------------------------------------------------------------------------
 // 3. Window
@@ -150,7 +186,6 @@ function killActive() {
   if (!activeProcess) return
   try {
     if (isWin) {
-      // Windows: taskkill /T kills the process tree
       execSync(`taskkill /pid ${activeProcess.pid} /T /F`, { stdio: 'ignore', timeout: 3000 })
     } else {
       activeProcess.kill('SIGTERM')
@@ -161,8 +196,7 @@ function killActive() {
 
 app.on('window-all-closed', () => {
   killActive()
-  if (!isWin && process.platform !== 'darwin') app.quit()
-  if (isWin) app.quit()
+  if (process.platform !== 'darwin') app.quit()
 })
 
 app.on('before-quit', killActive)
@@ -180,12 +214,9 @@ ipcMain.handle('chat:send', async (_event, prompt: string) => {
   killActive()
 
   return new Promise<void>((resolve) => {
-    // Always spawn through a shell so it can resolve PATH, .cmd, etc.
-    // On Windows: explicitly use cmd.exe (not powershell) since claude
-    // may only be on cmd's PATH.
     const claude = spawn(claudeBin, ['-p', '--dangerously-skip-permissions', prompt], {
-      env: shellEnv,
-      shell: isWin ? process.env.ComSpec || 'cmd.exe' : true,
+      env: mergedEnv,
+      shell: claudeShell,
     })
 
     activeProcess = claude
