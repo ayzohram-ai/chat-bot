@@ -2,38 +2,85 @@ import { app, BrowserWindow, ipcMain } from 'electron'
 import { spawn, ChildProcess, execSync } from 'child_process'
 import path from 'path'
 import os from 'os'
+import fs from 'fs'
 
 let mainWindow: BrowserWindow | null = null
 
-// Resolve the full shell PATH so we can find `claude` in packaged apps.
-// Electron apps don't inherit the user's login shell PATH.
-function getShellPATH(): string {
+// Resolve the user's full login-shell environment.
+// Electron (especially packaged .app) does NOT inherit the user's PATH.
+function getShellEnv(): Record<string, string> {
+  const env = { ...process.env } as Record<string, string>
   try {
-    // Ask the user's default shell for its PATH
     const shell = process.env.SHELL || '/bin/zsh'
-    const result = execSync(`${shell} -ilc 'echo $PATH'`, {
+    // -ilc: interactive login shell → loads .zshrc/.bashrc/.profile
+    const raw = execSync(`${shell} -ilc 'env'`, {
       encoding: 'utf-8',
-      timeout: 5000,
-    }).trim()
-    if (result) return result
-  } catch {}
-
-  // Fallback: cover the most common install locations
-  const home = os.homedir()
-  const common = [
-    `${home}/.nvm/versions/node/current/bin`,
-    `${home}/.npm-global/bin`,
-    `${home}/.volta/bin`,
-    `${home}/.local/bin`,
-    '/opt/homebrew/bin',
-    '/usr/local/bin',
-    '/usr/bin',
-    '/bin',
-  ]
-  return [...common, process.env.PATH || ''].join(':')
+      timeout: 8000,
+    })
+    for (const line of raw.split('\n')) {
+      const idx = line.indexOf('=')
+      if (idx > 0) {
+        env[line.slice(0, idx)] = line.slice(idx + 1)
+      }
+    }
+  } catch {
+    // Fallback: manually patch PATH with common locations
+    const home = os.homedir()
+    const extra = [
+      `${home}/.nvm/versions/node/current/bin`,
+      `${home}/.npm-global/bin`,
+      `${home}/.volta/bin`,
+      `${home}/.local/bin`,
+      '/opt/homebrew/bin',
+      '/usr/local/bin',
+      '/usr/bin',
+      '/bin',
+    ]
+    env.PATH = [...extra, env.PATH || ''].join(':')
+  }
+  return env
 }
 
-const shellPATH = getShellPATH()
+// Find the absolute path to the `claude` binary.
+// On Windows, `claude` is actually `claude.cmd` — spawn without shell won't find it.
+function findClaudeBinary(env: Record<string, string>): string {
+  const isWin = process.platform === 'win32'
+
+  // 1. Try `which` / `where` using the resolved env
+  try {
+    const cmd = isWin ? 'where claude' : 'which claude'
+    const result = execSync(cmd, { encoding: 'utf-8', env, timeout: 5000 }).trim()
+    const first = result.split('\n')[0].trim()
+    if (first && fs.existsSync(first)) return first
+  } catch {}
+
+  // 2. Brute-force scan common locations
+  const home = os.homedir()
+  const candidates = isWin
+    ? [
+        `${home}\\AppData\\Roaming\\npm\\claude.cmd`,
+        `${home}\\.volta\\bin\\claude.cmd`,
+        'C:\\Program Files\\nodejs\\claude.cmd',
+      ]
+    : [
+        `${home}/.npm-global/bin/claude`,
+        `${home}/.nvm/versions/node/current/bin/claude`,
+        `${home}/.volta/bin/claude`,
+        '/opt/homebrew/bin/claude',
+        '/usr/local/bin/claude',
+      ]
+
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p
+  }
+
+  // 3. Last resort — hope it's on PATH at runtime
+  return 'claude'
+}
+
+const shellEnv = getShellEnv()
+const claudeBin = findClaudeBinary(shellEnv)
+console.log('[claude-chat] resolved claude binary:', claudeBin)
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -90,8 +137,8 @@ ipcMain.handle('chat:send', async (event, prompt: string) => {
   }
 
   return new Promise<void>((resolve, reject) => {
-    const claude = spawn('claude', ['-p', '--dangerously-skip-permissions', prompt], {
-      env: { ...process.env, PATH: shellPATH },
+    const claude = spawn(claudeBin, ['-p', '--dangerously-skip-permissions', prompt], {
+      env: shellEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
 
