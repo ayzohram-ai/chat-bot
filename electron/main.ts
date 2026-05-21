@@ -166,14 +166,13 @@ let activeProcess: ChildProcess | null = null
 ipcMain.handle('chat:send', async (_event, prompt: string) => {
   killActive()
 
-  // On Windows, if claudeBin ends with .cmd, we MUST use shell: true
-  const needsShell = isWin && claudeBin.endsWith('.cmd')
-
   return new Promise<void>((resolve) => {
+    // Always use shell: true — this lets the OS handle PATH lookup,
+    // .cmd suffix resolution (Windows), and symlink traversal.
+    // claudeBin is either an absolute path or just 'claude'.
     const claude = spawn(claudeBin, ['-p', '--dangerously-skip-permissions', prompt], {
       env: shellEnv,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      shell: needsShell,
+      shell: true,
     })
 
     activeProcess = claude
