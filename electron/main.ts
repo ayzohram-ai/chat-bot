@@ -4,49 +4,70 @@ import path from 'path'
 import os from 'os'
 import fs from 'fs'
 
+const isWin = process.platform === 'win32'
+const pathSep = isWin ? ';' : ':'
+
 let mainWindow: BrowserWindow | null = null
 
-// Resolve the user's full login-shell environment.
-// Electron (especially packaged .app) does NOT inherit the user's PATH.
+// ---------------------------------------------------------------------------
+// 1. Resolve the user's full login-shell environment
+//    Electron (especially packaged .app / .exe) does NOT inherit the user's
+//    shell PATH, nvm, volta, etc.
+// ---------------------------------------------------------------------------
 function getShellEnv(): Record<string, string> {
   const env = { ...process.env } as Record<string, string>
-  try {
-    const shell = process.env.SHELL || '/bin/zsh'
-    // -ilc: interactive login shell → loads .zshrc/.bashrc/.profile
-    const raw = execSync(`${shell} -ilc 'env'`, {
-      encoding: 'utf-8',
-      timeout: 8000,
-    })
-    for (const line of raw.split('\n')) {
-      const idx = line.indexOf('=')
-      if (idx > 0) {
-        env[line.slice(0, idx)] = line.slice(idx + 1)
+
+  if (isWin) {
+    // Windows: `cmd /c set` dumps all env vars
+    try {
+      const raw = execSync('cmd /c set', { encoding: 'utf-8', timeout: 8000 })
+      for (const line of raw.split('\r\n')) {
+        const idx = line.indexOf('=')
+        if (idx > 0) env[line.slice(0, idx)] = line.slice(idx + 1)
       }
+    } catch {
+      const home = os.homedir()
+      const extra = [
+        path.join(home, 'AppData', 'Roaming', 'npm'),
+        path.join(home, '.volta', 'bin'),
+        'C:\\Program Files\\nodejs',
+      ]
+      env.PATH = [...extra, env.PATH || ''].join(pathSep)
     }
-  } catch {
-    // Fallback: manually patch PATH with common locations
-    const home = os.homedir()
-    const extra = [
-      `${home}/.nvm/versions/node/current/bin`,
-      `${home}/.npm-global/bin`,
-      `${home}/.volta/bin`,
-      `${home}/.local/bin`,
-      '/opt/homebrew/bin',
-      '/usr/local/bin',
-      '/usr/bin',
-      '/bin',
-    ]
-    env.PATH = [...extra, env.PATH || ''].join(':')
+  } else {
+    // macOS / Linux: ask the user's default shell for its env
+    try {
+      const shell = process.env.SHELL || '/bin/zsh'
+      const raw = execSync(`${shell} -ilc 'env'`, { encoding: 'utf-8', timeout: 8000 })
+      for (const line of raw.split('\n')) {
+        const idx = line.indexOf('=')
+        if (idx > 0) env[line.slice(0, idx)] = line.slice(idx + 1)
+      }
+    } catch {
+      const home = os.homedir()
+      const extra = [
+        `${home}/.nvm/versions/node/current/bin`,
+        `${home}/.npm-global/bin`,
+        `${home}/.volta/bin`,
+        `${home}/.local/bin`,
+        '/opt/homebrew/bin',
+        '/usr/local/bin',
+        '/usr/bin',
+        '/bin',
+      ]
+      env.PATH = [...extra, env.PATH || ''].join(pathSep)
+    }
   }
+
   return env
 }
 
-// Find the absolute path to the `claude` binary.
-// On Windows, `claude` is actually `claude.cmd` — spawn without shell won't find it.
+// ---------------------------------------------------------------------------
+// 2. Find the absolute path to the `claude` binary
+//    On Windows npm installs `claude.cmd`; spawn without shell won't find it.
+// ---------------------------------------------------------------------------
 function findClaudeBinary(env: Record<string, string>): string {
-  const isWin = process.platform === 'win32'
-
-  // 1. Try `which` / `where` using the resolved env
+  // Try `which` / `where` first
   try {
     const cmd = isWin ? 'where claude' : 'which claude'
     const result = execSync(cmd, { encoding: 'utf-8', env, timeout: 5000 }).trim()
@@ -54,12 +75,12 @@ function findClaudeBinary(env: Record<string, string>): string {
     if (first && fs.existsSync(first)) return first
   } catch {}
 
-  // 2. Brute-force scan common locations
+  // Brute-force common install locations
   const home = os.homedir()
   const candidates = isWin
     ? [
-        `${home}\\AppData\\Roaming\\npm\\claude.cmd`,
-        `${home}\\.volta\\bin\\claude.cmd`,
+        path.join(home, 'AppData', 'Roaming', 'npm', 'claude.cmd'),
+        path.join(home, '.volta', 'bin', 'claude.cmd'),
         'C:\\Program Files\\nodejs\\claude.cmd',
       ]
     : [
@@ -74,22 +95,27 @@ function findClaudeBinary(env: Record<string, string>): string {
     if (fs.existsSync(p)) return p
   }
 
-  // 3. Last resort — hope it's on PATH at runtime
+  // Last resort — will use shell to resolve
   return 'claude'
 }
 
 const shellEnv = getShellEnv()
 const claudeBin = findClaudeBinary(shellEnv)
+console.log('[claude-chat] platform:', process.platform)
 console.log('[claude-chat] resolved claude binary:', claudeBin)
 
+// ---------------------------------------------------------------------------
+// 3. Window
+// ---------------------------------------------------------------------------
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 900,
     height: 700,
     minWidth: 500,
     minHeight: 400,
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 16, y: 16 },
+    ...(isWin
+      ? {}
+      : { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 16, y: 16 } }),
     backgroundColor: '#0f0f0f',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -107,52 +133,59 @@ function createWindow() {
 
 app.whenReady().then(createWindow)
 
+function killActive() {
+  if (!activeProcess) return
+  try {
+    if (isWin) {
+      // Windows: taskkill /T kills the process tree
+      execSync(`taskkill /pid ${activeProcess.pid} /T /F`, { stdio: 'ignore', timeout: 3000 })
+    } else {
+      activeProcess.kill('SIGTERM')
+    }
+  } catch {}
+  activeProcess = null
+}
+
 app.on('window-all-closed', () => {
-  if (activeProcess) {
-    activeProcess.kill()
-    activeProcess = null
-  }
-  if (process.platform !== 'darwin') app.quit()
+  killActive()
+  if (!isWin && process.platform !== 'darwin') app.quit()
+  if (isWin) app.quit()
 })
 
-app.on('before-quit', () => {
-  if (activeProcess) {
-    activeProcess.kill()
-    activeProcess = null
-  }
-})
+app.on('before-quit', killActive)
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow()
 })
 
-// Claude CLI integration
+// ---------------------------------------------------------------------------
+// 4. Claude CLI integration
+// ---------------------------------------------------------------------------
 let activeProcess: ChildProcess | null = null
 
-ipcMain.handle('chat:send', async (event, prompt: string) => {
-  // Kill any existing process
-  if (activeProcess) {
-    activeProcess.kill()
-    activeProcess = null
-  }
+ipcMain.handle('chat:send', async (_event, prompt: string) => {
+  killActive()
 
-  return new Promise<void>((resolve, reject) => {
+  // On Windows, if claudeBin ends with .cmd, we MUST use shell: true
+  const needsShell = isWin && claudeBin.endsWith('.cmd')
+
+  return new Promise<void>((resolve) => {
     const claude = spawn(claudeBin, ['-p', '--dangerously-skip-permissions', prompt], {
       env: shellEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
+      shell: needsShell,
     })
 
     activeProcess = claude
 
     claude.stdout.on('data', (data: Buffer) => {
-      mainWindow?.webContents.send('chat:stream', data.toString())
+      const text = data.toString('utf-8')
+      if (text) mainWindow?.webContents.send('chat:stream', text)
     })
 
     claude.stderr.on('data', (data: Buffer) => {
-      const text = data.toString()
-      if (text.trim()) {
-        mainWindow?.webContents.send('chat:error', text)
-      }
+      const text = data.toString('utf-8').trim()
+      if (text) mainWindow?.webContents.send('chat:error', text)
     })
 
     claude.on('close', (code) => {
@@ -163,15 +196,12 @@ ipcMain.handle('chat:send', async (event, prompt: string) => {
 
     claude.on('error', (err) => {
       activeProcess = null
-      mainWindow?.webContents.send('chat:error', err.message)
-      reject(err)
+      mainWindow?.webContents.send('chat:error', `Process error: ${err.message}`)
+      resolve()
     })
   })
 })
 
 ipcMain.handle('chat:stop', () => {
-  if (activeProcess) {
-    activeProcess.kill()
-    activeProcess = null
-  }
+  killActive()
 })
