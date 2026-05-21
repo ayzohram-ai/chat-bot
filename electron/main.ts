@@ -1,8 +1,39 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
-import { spawn, ChildProcess } from 'child_process'
+import { spawn, ChildProcess, execSync } from 'child_process'
 import path from 'path'
+import os from 'os'
 
 let mainWindow: BrowserWindow | null = null
+
+// Resolve the full shell PATH so we can find `claude` in packaged apps.
+// Electron apps don't inherit the user's login shell PATH.
+function getShellPATH(): string {
+  try {
+    // Ask the user's default shell for its PATH
+    const shell = process.env.SHELL || '/bin/zsh'
+    const result = execSync(`${shell} -ilc 'echo $PATH'`, {
+      encoding: 'utf-8',
+      timeout: 5000,
+    }).trim()
+    if (result) return result
+  } catch {}
+
+  // Fallback: cover the most common install locations
+  const home = os.homedir()
+  const common = [
+    `${home}/.nvm/versions/node/current/bin`,
+    `${home}/.npm-global/bin`,
+    `${home}/.volta/bin`,
+    `${home}/.local/bin`,
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+  ]
+  return [...common, process.env.PATH || ''].join(':')
+}
+
+const shellPATH = getShellPATH()
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -60,7 +91,7 @@ ipcMain.handle('chat:send', async (event, prompt: string) => {
 
   return new Promise<void>((resolve, reject) => {
     const claude = spawn('claude', ['-p', '--dangerously-skip-permissions', prompt], {
-      env: { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}` },
+      env: { ...process.env, PATH: shellPATH },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
 
