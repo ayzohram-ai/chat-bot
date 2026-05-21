@@ -1,5 +1,17 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
+// Setup bridge — startup detection progress
+contextBridge.exposeInMainWorld('setup', {
+  onStatus: (callback: (data: { step: string; message: string }) => void) => {
+    const listener = (_event: any, data: any) => callback(data)
+    ipcRenderer.on('setup:status', listener)
+    return () => ipcRenderer.removeListener('setup:status', listener)
+  },
+  getResult: () => ipcRenderer.invoke('setup:get-result'),
+  retry: () => ipcRenderer.invoke('setup:retry'),
+})
+
+// Claude bridge — chat messaging
 contextBridge.exposeInMainWorld('claude', {
   send: (prompt: string) => ipcRenderer.invoke('chat:send', prompt),
   stop: () => ipcRenderer.invoke('chat:stop'),

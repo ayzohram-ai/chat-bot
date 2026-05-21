@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { User, Sparkles, Copy, Check } from 'lucide-react'
 import MarkdownRenderer from './MarkdownRenderer'
 
@@ -9,6 +9,21 @@ interface Props {
 export default function MessageBubble({ message }: Props) {
   const isUser = message.role === 'user'
   const [copied, setCopied] = useState(false)
+  const [thinkingSeconds, setThinkingSeconds] = useState(0)
+
+  const isThinking = !isUser && message.isStreaming && !message.content
+
+  useEffect(() => {
+    if (!isThinking) {
+      setThinkingSeconds(0)
+      return
+    }
+    const start = Date.now()
+    const timer = setInterval(() => {
+      setThinkingSeconds(Math.floor((Date.now() - start) / 1000))
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [isThinking])
 
   const handleCopy = async () => {
     try {
@@ -56,7 +71,9 @@ export default function MessageBubble({ message }: Props) {
                     <span className="w-1.5 h-1.5 bg-violet-500 rounded-full animate-bounce [animation-delay:150ms]"></span>
                     <span className="w-1.5 h-1.5 bg-violet-500 rounded-full animate-bounce [animation-delay:300ms]"></span>
                   </div>
-                  <span className="text-xs text-gray-500">Thinking...</span>
+                  <span className="text-xs text-gray-500">
+                    Thinking...{thinkingSeconds > 0 ? ` ${thinkingSeconds}s` : ''}
+                  </span>
                 </div>
               ) : null}
               {message.isStreaming && message.content && (

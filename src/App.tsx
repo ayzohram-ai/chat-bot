@@ -3,10 +3,12 @@ import { Menu, Trash2 } from 'lucide-react'
 import ChatView from './components/ChatView'
 import InputBar from './components/InputBar'
 import Sidebar from './components/Sidebar'
+import SetupScreen from './components/SetupScreen'
 import { useChat } from './hooks/useChat'
 import { useConversations } from './hooks/useConversations'
 
 export default function App() {
+  const [setupReady, setSetupReady] = useState(false)
   const {
     conversations, activeConversation, activeId,
     createConversation, updateMessages, deleteConversation,
@@ -104,6 +106,10 @@ export default function App() {
   const handleFileRemove = useCallback((index: number) => {
     setAttachedFiles(prev => prev.filter((_, i) => i !== index))
   }, [])
+
+  if (!setupReady) {
+    return <SetupScreen onReady={() => setSetupReady(true)} />
+  }
 
   return (
     <div className="h-screen flex flex-col bg-chat-bg text-white">

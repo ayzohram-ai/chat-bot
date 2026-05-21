@@ -2,6 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Setup screen progress bar animation */
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
 * {
   margin: 0;
   padding: 0;

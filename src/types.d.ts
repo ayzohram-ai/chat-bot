@@ -7,8 +7,27 @@ interface ClaudeBridge {
   onError: (callback: (error: string) => void) => () => void
 }
 
+interface SetupStatus {
+  step: 'searching' | 'validating' | 'done' | 'error'
+  message: string
+}
+
+interface SetupResult {
+  ok: boolean
+  bin: string
+  version: string
+  error?: string
+}
+
+interface SetupBridge {
+  onStatus: (callback: (data: SetupStatus) => void) => () => void
+  getResult: () => Promise<SetupResult | null>
+  retry: () => Promise<void>
+}
+
 interface Window {
   claude: ClaudeBridge
+  setup: SetupBridge
 }
 
 interface Message {
